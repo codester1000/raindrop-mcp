@@ -4,7 +4,8 @@
  * This module provides logging that never pollutes STDIO output, which is critical
  * for MCP protocol compliance when using STDIO transport.
  * 
- * - Uses stderr for all log output (STDIO transport uses stdout)
+ * - Uses stderr for all log output in STDIO mode (STDIO transport uses stdout)
+ * - Uses stdout for INFO/DEBUG and stderr for WARN/ERROR in HTTP mode
  * - Provides structured logging with timestamps and levels
  * - Can be safely used in both STDIO and HTTP server contexts
  * - Supports environment-based log level configuration
@@ -20,9 +21,18 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 };
 
 /**
+ * Detects if we're running in HTTP server mode (vs STDIO mode).
+ * HTTP mode is detected by the presence of PORT or HTTP_PORT env vars.
+ */
+function isHttpMode(): boolean {
+  return !!(process.env.PORT || process.env.HTTP_PORT);
+}
+
+/**
  * Logger class for MCP-safe logging.
  *
- * All log output is sent to stderr to avoid interfering with STDIO protocol communication.
+ * In STDIO mode: All log output is sent to stderr to avoid interfering with STDIO protocol.
+ * In HTTP mode: INFO/DEBUG go to stdout, WARN/ERROR go to stderr (for proper log categorization).
  * Log level can be set via the LOG_LEVEL environment variable.
  */
 class Logger {
@@ -45,7 +55,7 @@ class Logger {
     return LOG_LEVELS[level] >= LOG_LEVELS[this.level];
   }
 
-  private writeToStderr(level: LogLevel, message: string, ...args: any[]) {
+  protected writeLog(level: LogLevel, message: string, ...args: any[]) {
     if (!this.shouldLog(level)) {
       return;
     }
@@ -54,31 +64,35 @@ class Logger {
     const levelStr = level.toUpperCase().padEnd(5);
     const prefix = `[${timestamp}] ${levelStr}`;
     
-    // Use stderr to avoid polluting STDIO MCP protocol
+    // In HTTP mode: INFO/DEBUG go to stdout, WARN/ERROR go to stderr
+    // In STDIO mode: Everything goes to stderr to avoid polluting protocol
+    const useStdout = isHttpMode() && (level === 'info' || level === 'debug');
+    const stream = useStdout ? process.stdout : process.stderr;
+    
     if (args.length > 0) {
-      process.stderr.write(`${prefix} ${message}\n`);
+      stream.write(`${prefix} ${message}\n`);
       args.forEach(arg => {
-        process.stderr.write(`${prefix} ${typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)}\n`);
+        stream.write(`${prefix} ${typeof arg === 'object' ? JSON.stringify(arg, null, 2) : String(arg)}\n`);
       });
     } else {
-      process.stderr.write(`${prefix} ${message}\n`);
+      stream.write(`${prefix} ${message}\n`);
     }
   }
 
   debug(message: string, ...args: any[]) {
-    this.writeToStderr('debug', message, ...args);
+    this.writeLog('debug', message, ...args);
   }
 
   info(message: string, ...args: any[]) {
-    this.writeToStderr('info', message, ...args);
+    this.writeLog('info', message, ...args);
   }
 
   warn(message: string, ...args: any[]) {
-    this.writeToStderr('warn', message, ...args);
+    this.writeLog('warn', message, ...args);
   }
 
   error(message: string, ...args: any[]) {
-    this.writeToStderr('error', message, ...args);
+    this.writeLog('error', message, ...args);
   }
 
   /**
@@ -93,8 +107,8 @@ class Logger {
     const childLogger = new Logger();
     childLogger.level = this.level;
     // Override write method to include context
-    const originalWrite = childLogger.writeToStderr.bind(childLogger);
-    childLogger.writeToStderr = (level: LogLevel, message: string, ...args: any[]) => {
+    const originalWrite = childLogger.writeLog.bind(childLogger);
+    childLogger.writeLog = (level: LogLevel, message: string, ...args: any[]) => {
       originalWrite(level, `[${context}] ${message}`, ...args);
     };
     return childLogger;

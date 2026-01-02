@@ -1,6 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { zodToJsonSchema } from "zod-to-json-schema";
 import pkg from '../../package.json';
 import { BookmarkInputSchema, BookmarkOutputSchema, CollectionManageInputSchema, CollectionOutputSchema, HighlightInputSchema, HighlightOutputSchema, TagInputSchema, TagOutputSchema } from "../types/raindrop-zod.schemas.js";
 import RaindropService from "./raindrop.service.js";
@@ -563,12 +562,17 @@ export class RaindropMCPService {
 
     private registerDeclarativeTools() {
         for (const config of toolConfigs) {
+            // MCP SDK wraps inputSchema with z.object() internally (mcp.js:443)
+            // Therefore it expects ZodRawShape (plain object), not ZodObject
+            // Use .shape to extract the plain object that the SDK needs
+            const inputSchema = (config.inputSchema as z.ZodObject<any>).shape;
+            
             this.server.registerTool(
                 config.name,
                 {
                     title: config.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
                     description: config.description,
-                    inputSchema: zodToJsonSchema(config.inputSchema, { target: "openApi3" })
+                    inputSchema,
                 },
                 this.asyncHandler(async (args: any, extra: any) => config.handler(args, { raindropService: this.raindropService, ...extra }))
             );

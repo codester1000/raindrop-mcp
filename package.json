@@ -74,8 +74,8 @@
         "openapi-fetch": "^0.14.0",
         "rate-limiter-flexible": "^7.3.1",
         "simple-oauth2": "^5.1.0",
-        "zod": "^4.1.9",
-        "zod-to-json-schema": "^3.24.6"
+        "zod": "3.23.8",
+        "zod-to-json-schema": "^3.25.1"
     },
     "devDependencies": {
         "@anthropic-ai/dxt": "^0.2.6",
