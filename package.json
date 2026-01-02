@@ -65,7 +65,7 @@
     },
     "homepage": "https://github.com/codester1000/raindrop-mcp#readme",
     "dependencies": {
-        "@modelcontextprotocol/sdk": "^1.18.0",
+        "@modelcontextprotocol/sdk": "^1.19.0",
         "axios": "^1.12.2",
         "dotenv": "^17.2.2",
         "esm": "^3.2.25",
@@ -74,7 +74,7 @@
         "openapi-fetch": "^0.14.0",
         "rate-limiter-flexible": "^7.3.1",
         "simple-oauth2": "^5.1.0",
-        "zod": "3.23.8",
+        "zod": "^3.25.0",
         "zod-to-json-schema": "^3.25.1"
     },
     "devDependencies": {

@@ -102,6 +102,7 @@ const BookmarkSearchInputSchema = z.object({
     perPage: z.number().optional().describe('Items per page (max 50)'),
     sort: z.string().optional().describe('Sort order (score, title, -created, created)'),
     tag: z.string().optional().describe('Single tag to filter by'),
+    exactTagMatch: z.boolean().optional().describe('When true, filter to exact tag matches only (reduces false positives from full-text search)'),
     duplicates: z.boolean().optional().describe('Include duplicate bookmarks'),
     broken: z.boolean().optional().describe('Include broken links'),
     highlight: z.boolean().optional().describe('Only bookmarks with highlights'),
@@ -239,7 +240,19 @@ async function handleBookmarkSearch(args: z.infer<typeof BookmarkSearchInputSche
     setIfDefined(query, 'highlight', args.highlight);
     setIfDefined(query, 'domain', args.domain);
 
-    const result = await raindropService.getBookmarks(query as any);
+    let result = await raindropService.getBookmarks(query as any);
+
+    // Client-side filtering for exact tag matches (reduces false positives)
+    // The Raindrop API returns results that match tag text anywhere (title/description),
+    // not just bookmarks that actually have that tag
+    if (args.exactTagMatch && (args.tag || args.tags)) {
+        const searchTags = args.tags || (args.tag ? [args.tag] : []);
+        result.items = result.items.filter((bookmark: any) => {
+            const bookmarkTags = bookmark.tags || [];
+            return searchTags.every(tag => bookmarkTags.includes(tag));
+        });
+        result.count = result.items.length;
+    }
 
     const content: McpContent[] = [textContent(`Found ${result.count} bookmarks`)];
     result.items.forEach((bookmark: any) => {
@@ -351,11 +364,17 @@ async function handleBulkEditRaindrops(args: z.infer<typeof BulkEditRaindropsInp
     if (args.collection) body.collection = args.collection;
     if (args.nested !== undefined) body.nested = args.nested;
 
+    const token = process.env.RAINDROP_ACCESS_TOKEN;
+    if (!token) {
+        throw new Error('RAINDROP_ACCESS_TOKEN not set');
+    }
+
     const url = `https://api.raindrop.io/rest/v1/raindrops/${args.collectionId}`;
     try {
         const response = await fetch(url, {
             method: 'PUT',
             headers: {
+                'Authorization': `Bearer ${token}`,
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify(body),
