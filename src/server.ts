@@ -303,11 +303,27 @@ const server = http.createServer(async (req, res) => {
                 const sessionId = req.headers['mcp-session-id'] as string | undefined;
                 let transport: StreamableHTTPServerTransport;
 
+                // Reuse existing session if valid
                 if (sessionId && transports[sessionId]) {
                     transport = transports[sessionId];
                     logger.debug(`Reusing optimized session: ${sessionId}`);
-                } else if (!sessionId && req.method === 'POST' && isInitializeRequest(body)) {
-                    logger.info('Creating new optimized Streamable HTTP session');
+                } else {
+                    // Create new transport for:
+                    // 1. Initialize request (with or without sessionId) - allows reinitialization
+                    // 2. No sessionId provided - let transport handle initialization
+                    // 3. Invalid/expired sessionId - create new session (client recovery)
+                    const isInit = req.method === 'POST' && isInitializeRequest(body);
+                    
+                    if (isInit) {
+                        logger.info('Creating new optimized Streamable HTTP session for initialize request');
+                    } else if (sessionId && !transports[sessionId]) {
+                        logger.debug(`Session ${sessionId} not found (may have expired), creating new transport`);
+                    } else if (!sessionId) {
+                        // No sessionId and not initialize - let transport handle this
+                        // It may return an error or handle gracefully
+                        logger.debug('No session ID provided, creating new transport');
+                    }
+
                     transport = new StreamableHTTPServerTransport({
                         sessionIdGenerator: () => randomUUID(),
                         onsessioninitialized: (sessionId) => {
@@ -326,14 +342,9 @@ const server = http.createServer(async (req, res) => {
                     };
 
                     await mcpServer.connect(transport);
-                } else {
-                    logger.warn('Invalid optimized MCP request: missing session ID or invalid initialization');
-                    res.writeHead(400, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ jsonrpc: '2.0', error: { code: -32000, message: 'Bad Request: No valid session ID provided or missing initialization' }, id: null }));
-                    return;
                 }
 
-                // delegate to transport
+                // delegate to transport - it will handle validation and initialization
                 await transport.handleRequest(req as any, res as any, body);
             } catch (error) {
                 logger.error('Error handling optimized Streamable HTTP request:', error);
