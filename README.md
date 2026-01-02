@@ -220,6 +220,57 @@ For Claude Code or other MCP-compatible clients, this will register the Raindrop
 - **Debug:** `bun run debug` or `bun run inspector`
 - **HTTP server:** `bun run start:http`
 
+## Railway Deployment
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/template)
+
+### Quick Start
+
+1. Click the button above or create a new Railway project
+2. Connect your GitHub repository
+3. Add environment variable: `RAINDROP_ACCESS_TOKEN` (required)
+4. Railway will automatically detect Bun and deploy!
+
+The server will be available at `https://your-app.railway.app`
+
+### Configuration
+
+Railway automatically:
+- Detects Bun runtime
+- Uses `railway.json` for build configuration
+- Sets the `PORT` environment variable
+- Provides HTTPS automatically
+
+### Required Environment Variables
+
+- `RAINDROP_ACCESS_TOKEN` - Your Raindrop.io API access token (required)
+
+### Optional Environment Variables
+
+- `PORT` - Server port (Railway sets this automatically)
+- `HTTP_PORT` - Alternative port configuration
+- `LOG_LEVEL` - Logging level (default: `info`)
+- `NODE_ENV` - Environment mode (default: `production`)
+
+### Testing Locally Before Deployment
+
+```bash
+# Build the project
+bun run build
+
+# Test with Railway-like environment
+PORT=3002 RAINDROP_ACCESS_TOKEN=your_token bun run start:http
+```
+
+### Post-Deployment Verification
+
+1. Check Railway logs for startup errors
+2. Test health endpoint: `https://your-app.railway.app/health`
+3. Test MCP endpoint: `POST https://your-app.railway.app/mcp`
+4. Verify environment variables are set correctly
+
+For more details, see [DEPLOYMENT_PLAN.md](./DEPLOYMENT_PLAN.md).
+
 ## Contributing
 
 Contributions are welcome! Please open an issue or submit a pull request.
