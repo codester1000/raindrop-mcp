@@ -37,7 +37,8 @@ export default class RaindropService {
           }
           throw new Error(errorMsg);
         }
-        return response;
+        // Return undefined to pass through the response unchanged
+        // (returning the same response object triggers "must return new Response()" error)
       }
     });
   }
