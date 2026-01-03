@@ -65,6 +65,115 @@ const oauthClient = new AuthorizationCode({
 const transports: Record<string, StreamableHTTPServerTransport> = {};
 const sseTransports: Record<string, SSEServerTransport> = {};
 
+/**
+ * Constant-time string comparison to prevent timing attacks.
+ * @param a - First string to compare
+ * @param b - Second string to compare
+ * @returns True if strings are equal
+ */
+function constantTimeEqual(a: string, b: string): boolean {
+    if (a.length !== b.length) {
+        return false;
+    }
+    let result = 0;
+    for (let i = 0; i < a.length; i++) {
+        result |= a.charCodeAt(i) ^ b.charCodeAt(i);
+    }
+    return result === 0;
+}
+
+/**
+ * Extracts the API key from request headers, query parameters, or body.
+ * Supports multiple formats:
+ * - Authorization: Bearer <token>
+ * - X-API-Key header
+ * - apiKey query parameter
+ * - apiKey in request body (for MCP requests)
+ * @param req - HTTP request object
+ * @param url - Parsed URL object
+ * @param body - Optional parsed request body
+ * @returns The API key if found, undefined otherwise
+ */
+function extractApiKey(req: http.IncomingMessage, url: any, body?: any): string | undefined {
+    // Check Authorization header (Bearer token)
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        return authHeader.substring(7);
+    }
+
+    // Check X-API-Key header
+    const apiKeyHeader = req.headers['x-api-key'];
+    if (apiKeyHeader && typeof apiKeyHeader === 'string') {
+        return apiKeyHeader;
+    }
+
+    // Check query parameter
+    const apiKeyQuery = url.query?.apiKey;
+    if (apiKeyQuery && typeof apiKeyQuery === 'string') {
+        return apiKeyQuery;
+    }
+
+    // Check request body (for MCP requests)
+    if (body && typeof body === 'object' && body.apiKey && typeof body.apiKey === 'string') {
+        return body.apiKey;
+    }
+
+    return undefined;
+}
+
+/**
+ * Validates that the provided API key matches RAINDROP_ACCESS_TOKEN.
+ * @param providedKey - The API key provided in the request
+ * @returns True if the key is valid, false otherwise
+ */
+function validateApiKey(providedKey: string | undefined): boolean {
+    const expectedKey = process.env.RAINDROP_ACCESS_TOKEN;
+
+    // If no expected key is set, reject all requests (security by default)
+    if (!expectedKey) {
+        logger.warn('RAINDROP_ACCESS_TOKEN not set - rejecting all API key validation requests');
+        return false;
+    }
+
+    // If no key was provided, reject
+    if (!providedKey) {
+        return false;
+    }
+
+    // Use constant-time comparison to prevent timing attacks
+    return constantTimeEqual(providedKey, expectedKey);
+}
+
+/**
+ * Middleware to authenticate requests using API key validation.
+ * Returns true if authenticated, false otherwise.
+ * Sends 401 response if authentication fails.
+ * @param req - HTTP request object
+ * @param res - HTTP response object
+ * @param url - Parsed URL object
+ * @param body - Optional parsed request body
+ * @returns True if authenticated, false if authentication failed
+ */
+function authenticateRequest(
+    req: http.IncomingMessage,
+    res: http.ServerResponse,
+    url: any,
+    body?: any
+): boolean {
+    const providedKey = extractApiKey(req, url, body);
+
+    if (!validateApiKey(providedKey)) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            error: 'Unauthorized',
+            message: 'Invalid or missing API key. Provide API key via Authorization: Bearer <token>, X-API-Key header, apiKey query parameter, or apiKey in request body.'
+        }));
+        return false;
+    }
+
+    return true;
+}
+
 // Create native HTTP server
 const server = http.createServer(async (req, res) => {
     try {
@@ -72,7 +181,7 @@ const server = http.createServer(async (req, res) => {
         // CORS handling
         res.setHeader('Access-Control-Allow-Origin', '*');
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, MCP-Session-Id');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, MCP-Session-Id, Authorization, X-API-Key');
 
         if (req.method === 'OPTIONS') {
             res.writeHead(200);
@@ -197,6 +306,11 @@ const server = http.createServer(async (req, res) => {
 
         // SSE endpoint for legacy clients (GET to establish SSE connection)
         if (url.pathname === '/sse' && req.method === 'GET') {
+            // Authenticate request
+            if (!authenticateRequest(req, res, url)) {
+                return;
+            }
+
             try {
                 const sessionId = randomUUID();
                 const transport = new SSEServerTransport('/messages', res, {
@@ -250,6 +364,17 @@ const server = http.createServer(async (req, res) => {
                 return;
             }
 
+            // Authenticate request (after parsing body to check for apiKey in body)
+            if (!authenticateRequest(req, res, url, body)) {
+                return;
+            }
+
+            // Remove apiKey from body if present (clean up before passing to transport)
+            if (body && typeof body === 'object' && 'apiKey' in body) {
+                const { apiKey, ...cleanBody } = body;
+                body = cleanBody;
+            }
+
             try {
                 // Find the SSE transport by session ID in headers or body
                 const sessionId = req.headers['mcp-session-id'] as string || body?.sessionId;
@@ -299,6 +424,17 @@ const server = http.createServer(async (req, res) => {
                 logger.warn('Invalid JSON body on /mcp');
             }
 
+            // Authenticate request (after parsing body to check for apiKey in body)
+            if (!authenticateRequest(req, res, url, body)) {
+                return;
+            }
+
+            // Remove apiKey from body if present (clean up before passing to transport)
+            if (body && typeof body === 'object' && 'apiKey' in body) {
+                const { apiKey, ...cleanBody } = body;
+                body = cleanBody;
+            }
+
             try {
                 const sessionId = req.headers['mcp-session-id'] as string | undefined;
                 let transport: StreamableHTTPServerTransport;
@@ -313,7 +449,7 @@ const server = http.createServer(async (req, res) => {
                     // 2. No sessionId provided - let transport handle initialization
                     // 3. Invalid/expired sessionId - create new session (client recovery)
                     const isInit = req.method === 'POST' && isInitializeRequest(body);
-                    
+
                     if (isInit) {
                         logger.info('Creating new optimized Streamable HTTP session for initialize request');
                     } else if (sessionId && !transports[sessionId]) {
@@ -333,6 +469,7 @@ const server = http.createServer(async (req, res) => {
                         },
                     });
 
+                    // Set onclose handler before connecting to ensure it's defined
                     transport.onclose = () => {
                         if (transport.sessionId) {
                             delete transports[transport.sessionId];
@@ -341,7 +478,8 @@ const server = http.createServer(async (req, res) => {
                         }
                     };
 
-                    await mcpServer.connect(transport);
+                    // Type assertion: onclose is now guaranteed to be defined
+                    await mcpServer.connect(transport as any);
                 }
 
                 // delegate to transport - it will handle validation and initialization
